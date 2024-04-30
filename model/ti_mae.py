@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.optim import AdamW
 
 import lightning as L
 
@@ -33,16 +34,16 @@ class TiMAEConfig:
 
 # Copied from https://github.com/asmodaay/ti-mae/blob/master/src/nn/positional.py
 class PositionalEncoding(nn.Module):
-    def __init__(self, config):
+    def __init__(self, max_len=100, hidden_size=64):
         super().__init__()
 
-        positions = torch.arange(0, config.max_len, dtype=torch.float).unsqueeze(1)
+        positions = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(
-            torch.arange(0, config.hidden_size, 2).float() * (-math.log(10000.0) / config.hidden_size)
+            torch.arange(0, hidden_size, 2).float() * (-math.log(10000.0) / hidden_size)
         )
 
         # Store the positional encoding
-        pe = torch.zeros(1, config.max_len, config.hidden_size)
+        pe = torch.zeros(1, max_len, hidden_size)
 
         # Using "sin" in odd indices and "cos" in even indices
         pe[0, :, 0::2] = torch.sin(positions * div_term)
@@ -84,7 +85,7 @@ class TiMAEEncoder(nn.Module):
         super().__init__()
         self.config = config
 
-        self.positional_encoding = PositionalEncoding(config)
+        self.positional_encoding = PositionalEncoding(max_len=config.max_len, hidden_size=config.hidden_size)
 
         self.embedding = TiMAEEmbedding(config)
 
@@ -103,6 +104,8 @@ class TiMAEEncoder(nn.Module):
 
             for _ in range(config.num_layers)
         ])
+
+        self.norm = nn.LayerNorm(config.hidden_size)
 
     # Copied from https://github.com/facebookresearch/mae_st/blob/main/models_mae.py
     def random_masking(self, x, mask_ratio, is_cls_token=False):
@@ -138,10 +141,14 @@ class TiMAEEncoder(nn.Module):
         """_summary_
 
         Args:
-            x (torch.Tensor): a tensor of shape (batch_size, seq_len, hidden_size)
+            x (torch.Tensor): a tensor of shape (batch_size, seq_len, input_dim)
 
-        Returns:
-            torch.Tensor: a tensor of shape (batch_size, seq_len, hidden_size)
+        Returns: x, mask, ids_restore, ids_keep
+            last_hidden_state (torch.Tensor): a tensor of shape (batch_size, seq_len, hidden_size)
+            mask (torch.LongTensor): a tensor of shape (batch_size, seq_len)
+            ids_restore (torch.LongTensor): a tensor of shape (batch_size, sequence_length) 
+                containing the original index of the (shuffled) masked patches.
+            ids_keep (torch.LongTensor): a tensor of shape (batch_size, sequence_length)
         """        
         bs, seq_len, input_dim = x.shape
 
@@ -176,6 +183,9 @@ class TiMAEEncoder(nn.Module):
         for layer in self.layers:
             x = layer(x)
 
+        # Normalize
+        x = self.norm(x)
+
         if self.config.masking:
             return x, mask, ids_restore, ids_keep
         else:
@@ -185,7 +195,13 @@ class TiMAEDecoder(nn.Module):
     def __init__(self, config):
         super().__init__()
 
+        self.config = config
+
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, config.decoder_hidden_size))
+
         self.embedding = nn.Linear(config.hidden_size, config.decoder_hidden_size, bias=True)
+
+        self.positional_encoding = PositionalEncoding(max_len=config.max_len, hidden_size=config.decoder_hidden_size)
 
         self.layers = nn.ModuleList([
             nn.TransformerDecoderLayer(
@@ -201,6 +217,8 @@ class TiMAEDecoder(nn.Module):
             for _ in range(config.num_layers)
         ])
 
+        self.norm = nn.LayerNorm(config.decoder_hidden_size)
+
         self.projection = nn.Linear(config.decoder_hidden_size, config.input_dim, bias=True)
 
     def forward(self, x: torch.Tensor, ids_restore: torch.LongTensor):
@@ -208,23 +226,58 @@ class TiMAEDecoder(nn.Module):
 
         Args:
             x (torch.Tensor): a tensor of shape (batch_size, seq_len, hidden_size)
-
+            ids_restore (torch.LongTensor): a tensor of shape (batch_size, seq_len)
 
         Returns:
-            torch.Tensor: a tensor of shape (batch_size, seq_len, hidden_size)
+            torch.Tensor: a tensor of shape (batch_size, seq_len, input_dim)
         """        
+        x = x[:, 1:, :]  # Remove encoder cls token
+        bs, decoder_seq_len, hidden_size = x.shape
+
         # Input Embedding
+        x = self.embedding(x)
+        decoder_hidden_size = x.shape[-1]
+
+        # Append mask tokens to sequence
+        mask_tokens = self.mask_token.repeat(bs, self.config.seq_len - decoder_seq_len, 1)
+        x_ = torch.cat([x[:, :, :], mask_tokens], dim=1)  # We didn't use cls token in decoder
+        x_ = torch.gather(
+            x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x_.shape[2])
+        )  # unshuffle
+        x = x_.view([bs, self.seq_len, decoder_hidden_size])
 
         # Positional Encoding
+        x = self.positional_encoding(x)
 
         # Decoder
+        x = self.layers(x)
+        x = self.norm(x)
 
         # Projection
-        pass
+        x = self.projection(x)
+
+        return x
 
 class TiMAE(L.LightningModule):
     def __init__(self, config):
         super().__init__()
+
+        config.masking = False # Disable masking for encoder
+        
+        self.config = config
+
+        self.encoder = TiMAEEncoder(config)
+
+    def forward(self, x: torch.Tensor):
+        """_summary_
+
+        Args:
+            x (torch.Tensor): a tensor of shape (batch_size, seq_len, input_dim)
+
+        Returns:
+            torch.Tensor: a tensor of shape (batch_size, seq_len, hidden_size)
+        """        
+        return self.encoder(x)
 
 class TiMAEForPretraining(L.LightningModule):
     def __init__(self, config):
@@ -232,3 +285,30 @@ class TiMAEForPretraining(L.LightningModule):
 
         self.encoder = TiMAEEncoder(config)
         self.decoder = TiMAEDecoder(config)
+
+    def forward(self, x: torch.Tensor):
+        """_summary_
+
+        Args:
+            x (torch.Tensor): a tensor of shape (batch_size, seq_len, hidden_size)
+
+        Returns:
+            torch.Tensor: a tensor of shape (batch_size, seq_len, input_dim)
+        """        
+        masked_x, mask, ids_restore, ids_keep = self.encoder(x)
+        reconstruct_x = self.decoder(masked_x, ids_restore)
+
+        return reconstruct_x, mask, ids_restore
+    
+    def training_step(self, batch, batch_idx):
+        x = batch
+        masked_x, mask, ids_restore, ids_keep = self.encoder(x)
+        reconstruct_x = self.decoder(masked_x, ids_restore)
+
+        loss = F.mse_loss(reconstruct_x, x)
+
+        self.log('train_loss', loss, on_epoch=True, on_step=False, prog_bar=True)
+        return loss
+
+    def configure_optimizers(self):
+        return AdamW(self.parameters(), lr=1e-3)
