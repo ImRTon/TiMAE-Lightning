@@ -168,26 +168,67 @@ class TiMAEEncoder(nn.Module):
                 x = x[:, 1:, :]
 
             x, mask, ids_restore, ids_keep = self.random_masking(x, self.config.mask_ratio)
-            
+
             if self.config.cls_embed:
                 # Restore cls token
                 x = torch.cat((cls_x, x), dim=1)
 
         for layer in self.layers:
             x = layer(x)
-        return x, mask, ids_restore, ids_keep
+
+        if self.config.masking:
+            return x, mask, ids_restore, ids_keep
+        else:
+            return x
 
 class TiMAEDecoder(nn.Module):
     def __init__(self, config):
         super().__init__()
 
+        self.embedding = nn.Linear(config.hidden_size, config.decoder_hidden_size, bias=True)
+
+        self.layers = nn.ModuleList([
+            nn.TransformerDecoderLayer(
+                d_model=config.decoder_hidden_size,
+                nhead=config.num_attention_heads,
+                dim_feedforward=config.intermediate_size,
+                dropout=config.dropout,
+                activation=config.activation,
+                norm_first=False, # In TiMAE, we do normalization before attention
+                batch_first=True
+            )
+
+            for _ in range(config.num_layers)
+        ])
+
+        self.projection = nn.Linear(config.decoder_hidden_size, config.input_dim, bias=True)
+
+    def forward(self, x: torch.Tensor, ids_restore: torch.LongTensor):
+        """_summary_
+
+        Args:
+            x (torch.Tensor): a tensor of shape (batch_size, seq_len, hidden_size)
+
+
+        Returns:
+            torch.Tensor: a tensor of shape (batch_size, seq_len, hidden_size)
+        """        
+        # Input Embedding
+
+        # Positional Encoding
+
+        # Decoder
+
+        # Projection
+        pass
+
 class TiMAE(L.LightningModule):
     def __init__(self, config):
         super().__init__()
 
-        self.encoder = TiMAEEncoder()
-        self.decoder = TiMAEDecoder()
-
-class TiMAEPretrained(L.LightningModule):
+class TiMAEForPretraining(L.LightningModule):
     def __init__(self, config):
         super().__init__()
+
+        self.encoder = TiMAEEncoder(config)
+        self.decoder = TiMAEDecoder(config)
