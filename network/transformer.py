@@ -8,7 +8,7 @@ class ScaledDotProductAttention(nn.Module):
         self, 
         scale: torch.Tensor | None = None,
         attn_dropout_prob: float = 0.0
-    ) -> None:
+    ):
         super().__init__()
 
         self.scale = scale
@@ -22,19 +22,22 @@ class ScaledDotProductAttention(nn.Module):
         v: torch.Tensor, 
         mask: torch.Tensor | None = None,
         output_attentions: bool = False
-    ):
+    )-> tuple[torch.Tensor] | tuple[torch.Tensor, torch.Tensor]:
         """Perform scaled dot-product attention.
 
         Args:
-            q (torch.Tensor): _description_
-            k (torch.Tensor): _description_
-            v (torch.Tensor): _description_
+            q (torch.Tensor): query tensor, shape (bs, ..., seq_len, emb_dim)
+            k (torch.Tensor): key tensor, shape (bs, ..., seq_len, emb_dim)
+            v (torch.Tensor): value tensor, shape (bs, ..., seq_len, emb_dim)
             mask (torch.Tensor | None, optional): Attention mask; shape must be 
-                broadcastable to the shape of attention weights. 
+                broadcastable to the shape of attention weights, ex: (bs, ..., seq_len, seq_len). 
                 Two types of masks are supported. A boolean mask where a value of 
                 True indicates that the element should take part in attention. 
                 A float mask of the same type as query, key, value that is added to the attention score.
             output_attentions (bool, optional): Whether to output attention scores. Defaults to False.
+
+        Returns:
+            torch.Tensor: Attention scores (bs, ..., seq_len, emb_dim)
         """        
         # qkv: (batch_size, num_heads, seq_len, head_dim)
         scale_factor = 1 / math.sqrt(q.size(-1)) if self.scale is None else self.scale
@@ -52,12 +55,12 @@ class ScaledDotProductAttention(nn.Module):
         attn_perc = F.softmax(sims, dim=-1)
 
         if self.dropout is not None:
-            attn_percents = self.dropout(attn_perc)
+            attn_perc = self.dropout(attn_perc)
 
-        attn_scores = torch.matmul(attn_percents, v)
+        attn_scores = torch.matmul(attn_perc, v)
 
         if output_attentions:
-            return (attn_scores, attn_percents)
+            return (attn_scores, attn_perc)
         else:
             return (attn_scores,)
 
@@ -68,7 +71,7 @@ class MultiHeadAttention(nn.Module):
         num_heads: int,
         qkv_bias: bool = False,
         attn_dropout_prob: float = 0.0
-    ) -> None:
+    ):
         super().__init__()
 
         if d_model % num_heads != 0:
@@ -76,6 +79,7 @@ class MultiHeadAttention(nn.Module):
                               "by the number of attention heads (num_heads: {num_heads})")
 
         self.attn_dropout_prob = attn_dropout_prob
+        self.num_heads = num_heads
         self.attention_head_size = d_model // num_heads
         self.all_head_size = self.attention_head_size * num_heads
 
@@ -95,10 +99,38 @@ class MultiHeadAttention(nn.Module):
         v: torch.Tensor, 
         mask: torch.Tensor | None = None,
         output_attentions: bool = False
-    ):
+    )-> tuple[torch.Tensor] | tuple[torch.Tensor, torch.Tensor]:
+        """Perform multi-head attention from "Attention is All You Need" paper.
+
+        Args:
+            q (torch.Tensor): query tensor, shape (bs, seq_len, emb_dim)
+            k (torch.Tensor): key tensor, shape (bs, seq_len, emb_dim)
+            v (torch.Tensor): value tensor, shape (bs, seq_len, emb_dim)
+            mask (torch.Tensor | None, optional): Attention mask; shape must be 
+                broadcastable to the shape of attention weights, ex: (bs, ..., seq_len, seq_len). 
+                Two types of masks are supported. A boolean mask where a value of 
+                True indicates that the element should take part in attention. 
+                A float mask of the same type as query, key, value that is added to the attention score.
+                Defaults to None.
+            output_attentions (bool, optional): Whether to output attention scores. Defaults to False.
+
+        Returns:
+            tuple[torch.Tensor] | tuple[torch.Tensor, torch.Tensor]: 
+                - attention_output (torch.Tensor): The result of the attention mechanism, shape (bs, seq_len, emb_dim).
+                - attention_weights (torch.Tensor, optional): The attention weights, shape (bs, num_heads, seq_len, seq_len).
+                  Only returned if output_attentions is True.
+        """        
+        bs, seq_len, d_model = q.size()
         q = self.query(q)
         k = self.key(k)
         v = self.value(v)
+
+        # Split heads
+        headed_qkv_shape = (bs, seq_len, self.num_heads, self.attention_head_size)
+        # (bs, seq_len, all_head_size) -> (bs, num_heads, seq_len, head_dim)
+        q = q.view(headed_qkv_shape).permute(0, 2, 1, 3)
+        k = k.view(headed_qkv_shape).permute(0, 2, 1, 3)
+        v = v.view(headed_qkv_shape).permute(0, 2, 1, 3)
 
         product_attns = self.scaled_dot_product_attention(q, k, v, mask, output_attentions)
         attn_scores = product_attns[0]
