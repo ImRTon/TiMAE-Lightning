@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from utils import get_activation_fn
+
 class ScaledDotProductAttention(nn.Module):
     def __init__(
         self, 
@@ -145,5 +147,87 @@ class MultiHeadAttention(nn.Module):
         else:
             return (attn_scores,)
         
+class TransformerEncoderLayer(nn.Module):
+    def __init__(
+        self, 
+        d_model: int,
+        num_heads: int,
+        intermediate_dim: int,
+        qkv_bias: bool = False,
+        attn_dropout_prob: float = 0.0,
+        ff_dropout_prob: float = 0.0,
+        norm_first: bool = False,
+        layer_norm_eps: float = 1e-5,
+        act_func: str = "gelu"
+    ):
+        super().__init__()
 
+        self.norm_first = norm_first
+
+        self.norm1 = nn.LayerNorm(d_model, eps=layer_norm_eps)
+        self.norm2 = nn.LayerNorm(d_model, eps=layer_norm_eps)
+
+        self.attention = MultiHeadAttention(
+            d_model=d_model,
+            num_heads=num_heads,
+            qkv_bias=qkv_bias,
+            attn_dropout_prob=attn_dropout_prob
+        )
+
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, intermediate_dim),
+            get_activation_fn(act_func),
+            nn.Dropout(ff_dropout_prob),
+            nn.Linear(intermediate_dim, d_model),
+            nn.Dropout(ff_dropout_prob)
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor | None = None,
+        output_attentions: bool = False
+    )-> tuple[torch.Tensor] | tuple[torch.Tensor, torch.Tensor]:
+        """Perform a single transformer encoder layer.
+
+        Args:
+            x (torch.Tensor): input tensor, shape (bs, seq_len, emb_dim)
+            mask (torch.Tensor | None, optional): Attention mask; shape must be 
+                broadcastable to the shape of attention weights, ex: (bs, ..., seq_len, seq_len). 
+                Two types of masks are supported. A boolean mask where a value of 
+                True indicates that the element should take part in attention. 
+                A float mask of the same type as query, key, value that is added to the attention score.
+                Defaults to None.
+            output_attentions (bool, optional): Whether to output attention scores. Defaults to False.
+
+        Returns:
+            tuple[torch.Tensor] | tuple[torch.Tensor, torch.Tensor]: 
+                - attention_output (torch.Tensor): The result of the attention mechanism, shape (bs, seq_len, emb_dim).
+                - attention_weights (torch.Tensor, optional): The attention weights, shape (bs, num_heads, seq_len, seq_len).
+                  Only returned if output_attentions is True.
+        """        
+        # Attentions
+        if self.norm_first:
+            x = self.norm1(x)
         
+        # Self-attention set qkv to the same tensor
+        attn_outputs = self.attention(x, x, x, mask, output_attentions)
+        x = x + attn_outputs[0] # Residual connection
+
+        if not self.norm_first:
+            x = self.norm1(x)
+
+        # Feed Forward Network
+        if self.norm_first:
+            x = self.norm2(x)
+
+        ffn_outputs = self.ffn(x)
+        x = x + ffn_outputs # Residual connection
+
+        if not self.norm_first:
+            x = self.norm2(x)
+
+        if output_attentions:
+            return (x, attn_outputs[1])
+        else:
+            return (x,)
