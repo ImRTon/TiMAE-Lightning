@@ -120,7 +120,7 @@ class MultiHeadAttention(nn.Module):
                 - attention_weights (torch.Tensor, optional): The attention weights, shape (bs, num_heads, seq_len, seq_len).
                   Only returned if output_attentions is True.
         """        
-        bs, seq_len, d_model = q.size()
+        bs, seq_len, emb_dim = q.size()
         q = self.query(q)
         k = self.key(k)
         v = self.value(v)
