@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils import get_activation_fn
+from .utils import get_activation_fn
 
 class ScaledDotProductAttention(nn.Module):
     def __init__(
@@ -155,7 +155,7 @@ class TransformerEncoderLayer(nn.Module):
         intermediate_dim: int,
         qkv_bias: bool = False,
         attn_dropout_prob: float = 0.0,
-        ff_dropout_prob: float = 0.0,
+        ffn_dropout_prob: float = 0.0,
         norm_first: bool = False,
         layer_norm_eps: float = 1e-5,
         act_func: str = "gelu"
@@ -177,9 +177,9 @@ class TransformerEncoderLayer(nn.Module):
         self.ffn = nn.Sequential(
             nn.Linear(d_model, intermediate_dim),
             get_activation_fn(act_func),
-            nn.Dropout(ff_dropout_prob),
+            nn.Dropout(ffn_dropout_prob),
             nn.Linear(intermediate_dim, d_model),
-            nn.Dropout(ff_dropout_prob)
+            nn.Dropout(ffn_dropout_prob)
         )
 
     def forward(
@@ -209,6 +209,10 @@ class TransformerEncoderLayer(nn.Module):
         # Attentions
         if self.norm_first:
             x = self.norm1(x)
+
+        # Expand mask to all heads
+        if mask is not None:
+            mask = mask.unsqueeze(1).repeat(1, self.attention.num_heads, 1, 1)
         
         # Self-attention set qkv to the same tensor
         attn_outputs = self.attention(x, x, x, mask, output_attentions)
