@@ -10,6 +10,8 @@ This is an unofficial implementation of Ti-MAE in PyTorch Lightning. The origina
 * PyTorch Lightning  
 
 ## TODO
+- Add training script & results  
+- Complete unit tests  
 - Add CrossMAE to Ti-MAE  
 
 ## References
