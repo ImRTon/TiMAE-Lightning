@@ -474,12 +474,20 @@ class TiMAEForPretraining(L.LightningModule):
     
     def training_step(self, batch, batch_idx):
         x = batch
-        masked_x, mask, ids_restore, ids_keep = self.encoder(x)
-        reconstruct_x = self.decoder(masked_x, ids_restore)
+        reconstruct_x, mask, ids_restore = self(x)
 
         loss = self.criterion(reconstruct_x, x)
 
         self.log('train_loss', loss, prog_bar=True)
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        x = batch
+        reconstruct_x, mask, ids_restore = self(x)
+
+        loss = self.criterion(reconstruct_x, x)
+
+        self.log('val_loss', loss, prog_bar=True)
         return loss
 
     def configure_optimizers(self):
