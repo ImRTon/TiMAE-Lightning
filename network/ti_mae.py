@@ -373,7 +373,14 @@ class TiMAE(L.LightningModule):
         if encoder_ckpt_path is not None:
             print(f"==== Loading encoder weights from {encoder_ckpt_path} ====")
             with open(encoder_ckpt_path, 'rb') as f:
-                self.encoder.load_state_dict(torch.load(f)["state_dict"], strict=False)
+                # Create new state_dict, including only encoder weights
+                new_state_dict = {}
+                for key, value in torch.load(f)["state_dict"].items():
+                    if key.startswith("encoder."):
+                        new_key = key[len("encoder."):]  # Remove "encoder." prefix
+                        new_state_dict[new_key] = value
+                missing_keys = self.encoder.load_state_dict(new_state_dict, strict=True)
+                print("Missing keys:", missing_keys)
 
         self.classifier = nn.Linear(emb_size, num_classes, bias=True)
 
