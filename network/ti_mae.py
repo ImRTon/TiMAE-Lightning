@@ -4,7 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import lightning as L
 
-from torch.optim import AdamW, lr_scheduler
+from torch.optim import AdamW, Adam, lr_scheduler
+from torchmetrics import Accuracy, F1Score
+from pathlib import Path
 
 from .transformer import TransformerEncoderLayer
 
@@ -19,7 +21,7 @@ class PositionalEncoding(nn.Module):
         positions = torch.arange(0, max_len, step=1, dtype=torch.float).unsqueeze(1)
         embedding_index = torch.arange(0, emb_size, step=2, dtype=torch.float)
 
-        div_term = 1 / torch.tensor(10000).pow(embedding_index / emb_size)
+        div_term = torch.exp(-embedding_index * (math.log(10000.0) / emb_size))
 
         # Store the positional encoding
         pe = torch.zeros(1, max_len, emb_size)
@@ -287,20 +289,23 @@ class TiMAEDecoder(nn.Module):
         Returns:
             torch.Tensor: a tensor of shape (batch_size, seq_len, output_dim)
         """        
-        if self.encoder_cls_embed:
-            x = x[:, 1:, :]  # Remove encoder cls token
-
-        bs, decoder_seq_len, emb_size = x.shape
+        bs, decoder_seq_len, encoder_emb_size = x.shape
 
         # Input Embedding
         x = self.embedding(x)
 
         # Append mask tokens to sequence
-        mask_tokens = self.mask_token.repeat(bs, self.encoder_seq_len - decoder_seq_len, 1)
-        x_ = torch.cat([x[:, :, :], mask_tokens], dim=1)  # We didn't use cls token in decoder
+        mask_tokens = self.mask_token.repeat(bs, self.encoder_seq_len - decoder_seq_len + 1, 1)
+        if self.encoder_cls_embed:
+            x_ = torch.cat([x[:, 1:, :], mask_tokens], dim=1)  # Remove encoder cls token
+        else:
+            x_ = torch.cat([x[:, :, :], mask_tokens], dim=1)
+        # unshuffle
         x_ = torch.gather(
-            x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x_.shape[2])
-        )  # unshuffle
+            x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x.shape[2])
+        )
+        if self.encoder_cls_embed:
+            x_ = torch.cat([x[:, :1, :], x_], dim=1) # Append encoder cls token
 
         # Positional Encoding
         x = self.positional_encoding(x_)
@@ -319,6 +324,7 @@ class TiMAEDecoder(nn.Module):
 
         # Projection
         x = self.projection(x)
+        x = x[:, 1:, :]  # Remove cls token
 
         if output_attentions:
             return (x, all_attentions)
@@ -328,6 +334,7 @@ class TiMAEDecoder(nn.Module):
 class TiMAE(L.LightningModule):
     def __init__(
         self,
+        lr: float,
         num_classes: int,
         input_dim: int,
         num_heads: int,
@@ -343,6 +350,7 @@ class TiMAE(L.LightningModule):
         layer_norm_eps: float = 1e-5,
         act_func: str = 'gelu',
         interpolate_pos_enc_factor: float = 1.0,
+        encoder_ckpt_path: str | Path | None = None
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -362,8 +370,20 @@ class TiMAE(L.LightningModule):
             layer_norm_eps=layer_norm_eps,
             act_func=act_func
         )
+        if encoder_ckpt_path is not None:
+            print(f"==== Loading encoder weights from {encoder_ckpt_path} ====")
+            with open(encoder_ckpt_path, 'rb') as f:
+                self.encoder.load_state_dict(torch.load(f)["state_dict"], strict=False)
 
         self.classifier = nn.Linear(emb_size, num_classes, bias=True)
+
+        self.criterion = nn.CrossEntropyLoss()
+
+        self.train_accu = Accuracy(task="multiclass", num_classes=num_classes)
+        self.val_accu = Accuracy(task="multiclass", num_classes=num_classes)
+        self.val_f1 = F1Score(task="multiclass", num_classes=num_classes)
+        self.test_accu = Accuracy(task="multiclass", num_classes=num_classes)
+        self.test_f1 = F1Score(task="multiclass", num_classes=num_classes)
 
         # Check if pooling is valid
         if cls_embed is False and pooling not in ['mean', 'max']:
@@ -378,13 +398,13 @@ class TiMAE(L.LightningModule):
         Returns:
             torch.Tensor: a tensor of shape (batch_size, seq_len, emb_size)
         """        
-        x = self.encoder(x, interpolate_pos_enc_factor=self.hparams.interpolate_pos_enc_factor)
+        x = self.encoder(x, interpolate_pos_enc_factor=self.hparams.interpolate_pos_enc_factor)[0]
         
         if self.hparams.cls_embed:
             x = x[:, 0, :]
         elif self.hparams.pooling == 'max':
             # Max pooling
-            x = x.max(dim=1)
+            x = x.max(dim=1)[0]
         elif self.hparams.pooling == 'mean':
             # Average pooling
             x = x.mean(dim=1)
@@ -393,6 +413,59 @@ class TiMAE(L.LightningModule):
         
         logits = self.classifier(x)
         return logits
+    
+    def _shared_step(self, batch, batch_idx):
+        x, y = batch
+        logits = self(x)
+        loss = self.criterion(logits, y)
+        preds = logits.argmax(dim=1)
+        return loss, preds, y
+    
+    def training_step(self, batch, batch_idx):
+        loss, preds, y = self._shared_step(batch, batch_idx)
+
+        self.log('train_loss', loss, prog_bar=True)
+        accu = self.train_accu(preds, y)
+        self.log('train_accu', accu, prog_bar=True)
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        loss, preds, y = self._shared_step(batch, batch_idx)
+
+        self.log('val_loss', loss)
+        accu = self.val_accu(preds, y)
+        self.log('val_accu', accu)
+        f1 = self.val_f1(preds, y)
+        self.log('val_f1', f1)
+        return loss
+    
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        logits = self(x)
+        preds = logits.argmax(dim=1)
+
+        accu = self.test_accu(preds, y)
+        self.log('test_accu', accu)
+        f1 = self.test_f1(preds, y)
+        self.log('test_f1', f1)
+
+    def predict_step(self, batch, batch_idx):
+        x, y = batch
+        logits = self(x)
+        preds = logits.argmax(dim=1)
+
+        return preds, y
+
+    def configure_optimizers(self):
+        optimizer = AdamW(self.parameters(), lr=self.hparams.lr)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": lr_scheduler.OneCycleLR(
+                    optimizer, max_lr=self.hparams.lr, total_steps=self.trainer.estimated_stepping_batches),
+                "interval": "step",
+            },
+        }
 
 class TiMAEForPretraining(L.LightningModule):
     def __init__(
@@ -487,16 +560,22 @@ class TiMAEForPretraining(L.LightningModule):
 
         loss = self.criterion(reconstruct_x, x)
 
-        self.log('val_loss', loss, prog_bar=True)
+        self.log('val_loss', loss)
         return loss
+    
+    def predict_step(self, batch, batch_idx):
+        x = batch
+        reconstruct_x, mask, ids_restore = self(x)
+
+        return reconstruct_x, x, mask
 
     def configure_optimizers(self):
         optimizer = AdamW(self.parameters(), lr=self.hparams.lr)
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
-                "scheduler": lr_scheduler.CosineAnnealingLR(
-                    optimizer, T_max=self.trainer.estimated_stepping_batches),
+                "scheduler": lr_scheduler.OneCycleLR(
+                    optimizer, max_lr=self.hparams.lr, total_steps=self.trainer.estimated_stepping_batches),
                 "interval": "step",
             },
         }
