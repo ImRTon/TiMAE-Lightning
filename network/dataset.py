@@ -19,7 +19,9 @@ class UCR2018(L.LightningDataModule):
         crop_size: int | None = None,
         pretrain: bool = False,
         std: float | None = None,
-        mean: float | None = None
+        mean: float | None = None,
+        num_classes: int | None = None,
+        class_weights: list[float] | None = None
     ):
         super().__init__()
 
@@ -29,6 +31,21 @@ class UCR2018(L.LightningDataModule):
         self.split_ratio = split_ratio
 
         self.df = pd.read_csv(dataset_path, header=None, sep='\t')
+
+        if num_classes is None:
+            num_classes = len(self.df.iloc[:, 0].value_counts())
+        self.num_classes = num_classes
+
+        if class_weights is None:
+            class_counts = self.df.iloc[:, 0].value_counts()
+            class_freq = class_counts / class_counts.sum() * num_classes
+
+            class_weights = 1.0 / class_freq
+            class_weights = class_weights / class_weights.sum() * num_classes
+
+            class_weights = [max(0.1, min(w, 10)) for w in class_weights]
+        self.class_weights = class_weights
+
         if normalize:
             if std is None:
                 std = float(self.df.values.std(ddof=1))

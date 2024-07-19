@@ -90,6 +90,9 @@ class TiMAEEncoder(nn.Module):
         self.cls_embed = cls_embed
         self.mask_ratio = mask_ratio
 
+        if cls_embed:
+            max_len += 1
+
         self.positional_encoding = PositionalEncoding(max_len=max_len, emb_size=emb_size)
 
         self.embedding = TiMAEEmbedding(input_dim, emb_size)
@@ -258,6 +261,9 @@ class TiMAEDecoder(nn.Module):
 
         self.embedding = nn.Linear(encoder_emb_size, emb_size, bias=True)
 
+        if encoder_cls_embed:
+            max_len += 1
+
         self.positional_encoding = PositionalEncoding(max_len=max_len, emb_size=emb_size)
 
         self.layers = nn.ModuleList([
@@ -350,7 +356,8 @@ class TiMAE(L.LightningModule):
         layer_norm_eps: float = 1e-5,
         act_func: str = 'gelu',
         interpolate_pos_enc_factor: float = 1.0,
-        encoder_ckpt_path: str | Path | None = None
+        encoder_ckpt_path: str | Path | None = None,
+        class_weights: list[float] | None = None
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -384,7 +391,7 @@ class TiMAE(L.LightningModule):
 
         self.classifier = nn.Linear(emb_size, num_classes, bias=True)
 
-        self.criterion = nn.CrossEntropyLoss()
+        self.criterion = nn.CrossEntropyLoss(weight=torch.tensor(class_weights) if class_weights is not None else None)
 
         self.train_accu = Accuracy(task="multiclass", num_classes=num_classes)
         self.val_accu = Accuracy(task="multiclass", num_classes=num_classes)
