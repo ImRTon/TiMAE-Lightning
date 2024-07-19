@@ -76,17 +76,17 @@ class UCR2018(L.LightningDataModule):
                 self.train_df = (self.train_df - self.hparams.mean) / self.hparams.std
                 self.val_df = (self.val_df - self.hparams.mean) / self.hparams.std
 
-            self.train_label = self.train_df.pop(0).to_numpy()
-            self.val_label = self.val_df.pop(0).to_numpy()
+            self.train_label = self.train_df.pop(0).to_numpy() - 1
+            self.val_label = self.val_df.pop(0).to_numpy() - 1
             self.train_df = self.train_df.to_numpy()
             self.val_df = self.val_df.to_numpy()
             
         elif stage == 'test':
-            self.test_label = self.df.pop(0).to_numpy()
+            self.test_label = self.df.pop(0).to_numpy() - 1
             self.test_df = self.df.to_numpy()
 
         elif stage == 'predict':
-            self.predict_label = self.df.pop(0).to_numpy()
+            self.predict_label = self.df.pop(0).to_numpy() - 1
             self.predict_df = self.df.to_numpy()
 
     def train_dataloader(self):
