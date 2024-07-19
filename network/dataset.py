@@ -21,7 +21,8 @@ class UCR2018(L.LightningDataModule):
         std: float | None = None,
         mean: float | None = None,
         num_classes: int | None = None,
-        class_weights: list[float] | None = None
+        class_weights: list[float] | None = None,
+        class_id_start: int | None = None
     ):
         super().__init__()
 
@@ -35,6 +36,12 @@ class UCR2018(L.LightningDataModule):
         if num_classes is None:
             num_classes = len(self.df.iloc[:, 0].value_counts())
         self.num_classes = num_classes
+
+        if class_id_start is None:
+            class_id_start = int(self.df.iloc[:, 0].min())
+            if class_id_start != 1 and class_id_start != 0:
+                raise RuntimeWarning("Class ID should start from 0 or 1, please check the dataset.")
+        self.class_id_start = class_id_start
 
         if class_weights is None:
             class_counts = self.df.iloc[:, 0].value_counts()
@@ -76,17 +83,17 @@ class UCR2018(L.LightningDataModule):
                 self.train_df = (self.train_df - self.hparams.mean) / self.hparams.std
                 self.val_df = (self.val_df - self.hparams.mean) / self.hparams.std
 
-            self.train_label = self.train_df.pop(0).to_numpy() - 1
-            self.val_label = self.val_df.pop(0).to_numpy() - 1
+            self.train_label = self.train_df.pop(0).to_numpy() - self.class_id_start
+            self.val_label = self.val_df.pop(0).to_numpy() - self.class_id_start
             self.train_df = self.train_df.to_numpy()
             self.val_df = self.val_df.to_numpy()
             
         elif stage == 'test':
-            self.test_label = self.df.pop(0).to_numpy() - 1
+            self.test_label = self.df.pop(0).to_numpy() - self.class_id_start
             self.test_df = self.df.to_numpy()
 
         elif stage == 'predict':
-            self.predict_label = self.df.pop(0).to_numpy() - 1
+            self.predict_label = self.df.pop(0).to_numpy() - self.class_id_start
             self.predict_df = self.df.to_numpy()
 
     def train_dataloader(self):
