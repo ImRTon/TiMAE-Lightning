@@ -360,7 +360,7 @@ class TiMAE(L.LightningModule):
         class_weights: list[float] | None = None
     ):
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=['class_weights', 'num_classes'])
 
         self.encoder = TiMAEEncoder(
             input_dim=input_dim,
