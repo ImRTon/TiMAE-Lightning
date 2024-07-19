@@ -395,9 +395,9 @@ class TiMAE(L.LightningModule):
 
         self.train_accu = Accuracy(task="multiclass", num_classes=num_classes)
         self.val_accu = Accuracy(task="multiclass", num_classes=num_classes)
-        self.val_f1 = F1Score(task="multiclass", num_classes=num_classes)
+        self.val_f1 = F1Score(task="multiclass", num_classes=num_classes, average='macro')
         self.test_accu = Accuracy(task="multiclass", num_classes=num_classes)
-        self.test_f1 = F1Score(task="multiclass", num_classes=num_classes)
+        self.test_f1 = F1Score(task="multiclass", num_classes=num_classes, average='macro')
 
         # Check if pooling is valid
         if cls_embed is False and pooling not in ['mean', 'max']:
