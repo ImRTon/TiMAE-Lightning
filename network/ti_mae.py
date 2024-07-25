@@ -90,9 +90,6 @@ class TiMAEEncoder(nn.Module):
         self.cls_embed = cls_embed
         self.mask_ratio = mask_ratio
 
-        if cls_embed:
-            max_len += 1
-
         self.positional_encoding = PositionalEncoding(max_len=max_len, emb_size=emb_size)
 
         self.embedding = TiMAEEmbedding(input_dim, emb_size)
@@ -260,9 +257,6 @@ class TiMAEDecoder(nn.Module):
         self.mask_token = nn.Parameter(torch.zeros(1, 1, emb_size))
 
         self.embedding = nn.Linear(encoder_emb_size, emb_size, bias=True)
-
-        if encoder_cls_embed:
-            max_len += 1
 
         self.positional_encoding = PositionalEncoding(max_len=max_len, emb_size=emb_size)
 
