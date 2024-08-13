@@ -1,6 +1,6 @@
 from lightning.pytorch.cli import LightningArgumentParser, LightningCLI
 
-from network.dataset import UCR2018
+from network.dataset import UCR2018, KaggleECGCategorization
 from network.ti_mae import TiMAEForPretraining, TiMAE
 
 class MyLightningCLI(LightningCLI):
@@ -13,7 +13,6 @@ class MyLightningCLI(LightningCLI):
 
 def main():
     cli = MyLightningCLI(
-        datamodule_class=UCR2018,
         save_config_kwargs={'overwrite': True}
     )
 
