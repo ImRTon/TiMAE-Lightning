@@ -1,5 +1,6 @@
 # Ti-MAE: Self-Supervised Masked Time Series Autoencoders
 This is an unofficial implementation of Ti-MAE in PyTorch Lightning. The original paper can be found [here](https://arxiv.org/abs/2301.08871).  
+There's also a experimental implementation of Ti-MAE using Mamba v2 instead of transformer, you can find more information about Mamba [here](https://github.com/state-spaces/mamba).  
 
 > [!NOTE]  
 > This is a work in progress.
