@@ -8,8 +8,10 @@ This is an unofficial implementation of Ti-MAE in PyTorch Lightning. The origina
 * Python >= 3.9  
 * PyTorch  
 * PyTorch Lightning  
+* [mamba-ssm](https://github.com/state-spaces/mamba)  
 
 ## TODO
+- Complete documentation
 - Complete unit tests  
 - Add CrossMAE to Ti-MAE  
 
@@ -28,7 +30,7 @@ python train.py fit --model MODEL_NAME --model.lr LEARNINGRATE --model.input_dim
     --trainer.max_epochs MAX_EPOCHS --trainer.callbacks+=LearningRateMonitor \
     --trainer.callbacks.logging_interval=step --trainer.log_every_n_steps 1
 ```
-* `MODEL_NAME`: The model to train, available models are `TiMAE`, `TiMAEForPretraining`.  
+* `MODEL_NAME`: The model to train, available models are `TiMAE`, `TiMAEForPretraining`, `TiMAEMamba`, `TiMAEMambaForPretraining`.  
 * `LEARNINGRATE`: The learning rate for the model.  
 * `INPUT_DATA_DIM`: The input data dimension, for UCR2018 dataset is `1`.  
 * `NUM_HEADS`: The number of heads for the transformer.  
@@ -52,11 +54,13 @@ Below are the example commands to train the model.
 ```bash
 python train.py fit --model TiMAEForPretraining --model.lr 1e-3 --model.input_dim 1 --model.num_heads 4 --model.num_decoder_heads 4 --model.num_layers 2 --model.num_decoder_layers 2 --model.emb_size 64 --model.decoder_emb_size 32 --model.intermediate_dim 256 --model.decoder_intermediate_dim 128 --model.cls_embed True --model.max_len 140 --data.batch_size 64 --data.dataset_path datasets/UCRArchive_2018/ECG5000/ECG5000_TEST.tsv --data.val_dataset_path datasets/UCRArchive_2018/ECG5000/ECG5000_TRAIN.tsv --data.pretrain True --trainer.max_epochs 1000  --trainer.callbacks+=LearningRateMonitor --trainer.callbacks.logging_interval=step --model.seq_len 140 --data.normalize False --trainer.log_every_n_steps 1 --model.mask_ratio 0.75
 ```
+```bash
+python train.py fit --model TiMAEMambaForPretraining --model.lr 1e-3 --model.input_dim 1 --model.num_heads 8 --model.num_decoder_heads 8 --model.ssm_state_size 64 --model.decoder_ssm_state_size 64 --model.emb_size 64 --model.decoder_emb_size 32 --model.cls_embed True --data.batch_size 64 --data.dataset_path datasets/UCRArchive_2018/ECG5000/ECG5000_TEST.tsv --data.val_dataset_path datasets/UCRArchive_2018/ECG5000/ECG5000_TRAIN.tsv --data.pretrain True --trainer.max_epochs 1000  --trainer.callbacks+=LearningRateMonitor --trainer.callbacks.logging_interval=step --model.seq_len 140 --data.normalize False --trainer.log_every_n_steps 1 --model.mask_ratio 0.75
+```
 
 ### Finetuning
 ```bash
 python train.py fit --model TiMAE --model.lr 1e-3 --model.input_dim 1 --model.num_heads 4 --model.num_layers 2 --model.emb_size 64 --model.intermediate_dim 256 --model.cls_embed True --model.max_len 140 --data.batch_size 64 --data.dataset_path datasets/UCRArchive_2018/ECG5000/ECG5000_TRAIN.tsv --data.pretrain False --trainer.max_epochs 20  --trainer.callbacks+=LearningRateMonitor --trainer.callbacks.logging_interval=step --data.normalize False --trainer.log_every_n_steps 1 --model.encoder_ckpt_path lightning_logs/version_0/checkpoints/epoch\=999-step\=71000.ckpt
-
 ```
 
 ### Testing
@@ -67,10 +71,13 @@ python train.py test --model TiMAE --model.lr 1e-3 --model.input_dim 1 --model.n
 ## Results
 
 ### UCR2018
-| Dataset | Method      | Accuracy |
-| ------- | ----------- | -------- |
-| ECG5000 | CLS TOKEN   | 0.937556 |
-| ECG5000 | AVG POOLING | 0.941556 |
+| Dataset | Model       | Params | Method      | Accuracy | F1       |
+| ------- | ----------- | ------ | ----------- | -------- | -------- |
+| ECG5000 | TiMAE       | 91.7 K | CLS TOKEN   | 0.937556 |          |
+| ECG5000 | TiMAE       | 91.7 K | AVG POOLING | 0.941556 |          |
+| ECG5000 | TiMAE-Mamba | 35.7 K | AVG POOLING | 0.935778 | 0.611325 |
+| ECG5000 | TiMAE-Mamba |  1.7 M | CLS TOKEN   | 0.927111 | 0.640663 |
+| ECG5000 | TiMAE-Mamba |  1.7 M | AVG POOLING | 0.929778 | 0.620936 |
 
 ## References
 * [Transformers ViTMAE](https://github.com/huggingface/transformers/blob/main/src/transformers/models/vit_mae/modeling_vit_mae.py)  
