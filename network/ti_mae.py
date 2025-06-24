@@ -550,33 +550,38 @@ class TiMAEForPretraining(L.LightningModule):
         """        
         masked_x, mask, ids_restore, ids_keep = self.encoder(x)
         reconstruct_x = self.decoder(masked_x, ids_restore)[0]
-
         return (reconstruct_x, mask, ids_restore)
+    def _common_step(self, batch, batch_idx):
+        x = batch
+        reconstruct_x, mask, ids_restore = self(x)
+        if not self.hparams.cls_embed:
+            reshaped_x = x[:, 1:, :]
+        else:
+            reshaped_x = x
+        loss = self.criterion(reconstruct_x, reshaped_x)
+        return loss, reconstruct_x, reshaped_x, mask, ids_restore
     
     def training_step(self, batch, batch_idx):
-        x = batch
-        reconstruct_x, mask, ids_restore = self(x)
-
-        loss = self.criterion(reconstruct_x, x)
-
+        loss, reconstruct_x, reshaped_x, mask, ids_restore = self._common_step(batch, batch_idx)
         self.log('train_loss', loss, prog_bar=True)
         return loss
-    
+
     def validation_step(self, batch, batch_idx):
-        x = batch
-        reconstruct_x, mask, ids_restore = self(x)
-
-        loss = self.criterion(reconstruct_x, x)
-
+        loss, reconstruct_x, reshaped_x, mask, ids_restore = self._common_step(batch, batch_idx)
         self.log('val_loss', loss)
         return loss
     
     def predict_step(self, batch, batch_idx):
         x = batch
         reconstruct_x, mask, ids_restore = self(x)
-
         return reconstruct_x, x, mask
+    
+    def test_step(self, batch, batch_idx):
 
+        loss, reconstruct_x, reshaped_x, mask, ids_restore = self._common_step(batch, batch_idx)
+        self.log('test_loss', loss)
+        return loss
+    
     def configure_optimizers(self):
         optimizer = AdamW(self.parameters(), lr=self.hparams.lr)
         return {
