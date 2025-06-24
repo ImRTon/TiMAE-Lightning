@@ -32,7 +32,7 @@ class UCR2018(L.LightningDataModule):
         self.split_ratio = split_ratio
 
         self.df = pd.read_csv(dataset_path, header=None, sep='\t')
-
+        self.df_copy = self.df.copy()
         if num_classes is None:
             num_classes = len(self.df.iloc[:, 0].value_counts())
         self.num_classes = num_classes
@@ -90,8 +90,8 @@ class UCR2018(L.LightningDataModule):
             self.val_df = self.val_df.to_numpy()
             
         elif stage == 'test':
-            self.test_label = self.df.pop(0).to_numpy() - self.class_id_start
-            self.test_df = self.df.to_numpy()
+            self.test_label = self.df_copy.pop(0).to_numpy() - self.class_id_start
+            self.test_df = self.df_copy.to_numpy()
 
         elif stage == 'predict':
             self.predict_label = self.df.pop(0).to_numpy() - self.class_id_start
